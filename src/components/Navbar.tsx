@@ -13,8 +13,14 @@ import {
   Feather,
   Lock,
   Download,
-  Upload
+  Upload,
+  Cloud,
+  CloudOff,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
+
+export type SyncStatusType = 'synced' | 'syncing' | 'error' | 'disabled';
 
 interface NavbarProps {
   activeTab: TabType;
@@ -25,6 +31,8 @@ interface NavbarProps {
   onLockApp?: () => void;
   onExportData?: () => void;
   onImportData?: (file: File) => void;
+  syncStatus?: SyncStatusType;
+  onShowFirebaseInfo?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -35,7 +43,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   setIsDark,
   onLockApp,
   onExportData,
-  onImportData
+  onImportData,
+  syncStatus = 'synced',
+  onShowFirebaseInfo
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -102,6 +112,48 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Action Tools */}
           <div className="flex items-center space-x-2">
+            {/* Firebase Cloud Sync Indicator Badge */}
+            {syncStatus === 'synced' && (
+              <button
+                onClick={onShowFirebaseInfo}
+                title="Firebase Cloud Synced - Click for status details"
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-semibold hover:bg-emerald-500/20 transition-all"
+              >
+                <Cloud size={14} className="text-emerald-400" />
+                <span className="hidden sm:inline">Synced</span>
+              </button>
+            )}
+            {syncStatus === 'syncing' && (
+              <button
+                onClick={onShowFirebaseInfo}
+                title="Syncing with Firebase Cloud..."
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30 text-xs font-semibold hover:bg-amber-500/20 transition-all"
+              >
+                <RefreshCw size={14} className="animate-spin text-amber-400" />
+                <span className="hidden sm:inline">Syncing</span>
+              </button>
+            )}
+            {syncStatus === 'error' && (
+              <button
+                onClick={onShowFirebaseInfo}
+                title="Firebase Sync Error! Click for setup instructions"
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-red-500/10 text-red-400 border border-red-500/30 text-xs font-semibold hover:bg-red-500/20 transition-all animate-pulse"
+              >
+                <AlertTriangle size={14} className="text-red-400" />
+                <span className="hidden sm:inline">Sync Error</span>
+              </button>
+            )}
+            {syncStatus === 'disabled' && (
+              <button
+                onClick={onShowFirebaseInfo}
+                title="Firebase Disconnected"
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-slate-500/10 text-slate-400 border border-slate-500/30 text-xs font-semibold hover:bg-slate-500/20 transition-all"
+              >
+                <CloudOff size={14} className="text-slate-400" />
+                <span className="hidden sm:inline">Offline</span>
+              </button>
+            )}
+
             <button
               onClick={onOpenTaskModal}
               className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-500/20 transition-all active:scale-95"

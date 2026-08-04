@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   AppData,
   TaskItem,
@@ -18,10 +18,11 @@ import { formatDateWithDay, getLocalDateStr } from './utils/date';
 import {
   saveAppDataToFirebase,
   subscribeAppDataFromFirebase,
-  isFirebaseConfigured
+  isFirebaseConfigured,
+  mergeAppData
 } from './utils/firebase';
 
-import { Navbar } from './components/Navbar';
+import { Navbar, SyncStatusType } from './components/Navbar';
 import { UpcomingAlertBanner } from './components/UpcomingAlertBanner';
 import { AcademicSection } from './components/AcademicSection';
 import { ResearchSection } from './components/ResearchSection';
@@ -30,6 +31,7 @@ import { PlannerTimeline } from './components/PlannerTimeline';
 import { CourseLogSection } from './components/CourseLogSection';
 import { TaskModal } from './components/TaskModal';
 import { LockScreen } from './components/LockScreen';
+import { FirebaseInfoModal } from './components/FirebaseInfoModal';
 
 import {
   CheckCircle2,
@@ -88,6 +90,15 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [isDark, setIsDark] = useState<boolean>(true);
 
+  // Cloud Synchronization Guards & Status State
+  const isCloudInitializedRef = useRef(false);
+  const isRemoteUpdateRef = useRef(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatusType>(() =>
+    isFirebaseConfigured() ? 'syncing' : 'disabled'
+  );
+  const [syncErrorMessage, setSyncErrorMessage] = useState<string | undefined>(undefined);
+  const [isFirebaseModalOpen, setIsFirebaseModalOpen] = useState(false);
+
   // Current Date State (Auto-refreshes at Midnight 12:00 AM in Local BD Timezone)
   const [currentDateStr, setCurrentDateStr] = useState<string>(
     () => getLocalDateStr()
@@ -105,22 +116,91 @@ export default function App() {
   const [modalDefaultSubCategory, setModalDefaultSubCategory] = useState<SubCategoryType>('ct');
   const [modalDefaultDate, setModalDefaultDate] = useState<string | undefined>(undefined);
 
-  // Sync state changes to localStorage & Firebase Firestore Cloud DB
-  useEffect(() => {
-    saveAppData(appData);
-    saveAppDataToFirebase(appData);
-  }, [appData]);
-
   // Subscribe to Real-Time Cloud Updates from Firebase Firestore
   useEffect(() => {
     if (isFirebaseConfigured()) {
-      const unsubscribe = subscribeAppDataFromFirebase((remoteData) => {
-        setAppData(remoteData);
-        saveAppData(remoteData);
-      });
+      setSyncStatus('syncing');
+      const unsubscribe = subscribeAppDataFromFirebase(
+        (remoteData) => {
+          // Cloud document exists: merge with local state to prevent losing any local work
+          isRemoteUpdateRef.current = true;
+          setAppData((prevLocal) => {
+            const merged = mergeAppData(prevLocal, remoteData);
+            saveAppData(merged);
+            // If local had unsynced items, sync merged state back to cloud
+            if (
+              merged.tasks.length > remoteData.tasks.length ||
+              merged.courses.length > remoteData.courses.length ||
+              ((merged.courseLogs?.length || 0) > (remoteData.courseLogs?.length || 0))
+            ) {
+              saveAppDataToFirebase(merged).catch(() => {});
+            }
+            return merged;
+          });
+          isCloudInitializedRef.current = true;
+          setSyncStatus('synced');
+          setSyncErrorMessage(undefined);
+        },
+        () => {
+          // Cloud document is empty: push initial local data to cloud if available
+          if (!isCloudInitializedRef.current) {
+            isCloudInitializedRef.current = true;
+            const currentLocal = loadAppData();
+            if (currentLocal.tasks.length > 0 || currentLocal.courses.length > 0) {
+              saveAppDataToFirebase(currentLocal)
+                .then(() => {
+                  setSyncStatus('synced');
+                  setSyncErrorMessage(undefined);
+                })
+                .catch((err) => {
+                  setSyncStatus('error');
+                  setSyncErrorMessage(err?.message || 'Failed to save initial data to Firebase');
+                });
+            } else {
+              setSyncStatus('synced');
+            }
+          } else {
+            setSyncStatus('synced');
+          }
+        },
+        (err) => {
+          // Error / Permission issue: mark initialized to fallback gracefully
+          isCloudInitializedRef.current = true;
+          setSyncStatus('error');
+          setSyncErrorMessage(err?.message || 'Firestore subscription error (check Security Rules)');
+        }
+      );
       return () => unsubscribe();
+    } else {
+      isCloudInitializedRef.current = true;
+      setSyncStatus('disabled');
     }
   }, []);
+
+  // Sync state changes to localStorage & Firebase Firestore Cloud DB
+  useEffect(() => {
+    saveAppData(appData);
+
+    // Skip echo-saving back to Firebase if change was triggered by incoming Firestore update
+    if (isRemoteUpdateRef.current) {
+      isRemoteUpdateRef.current = false;
+      return;
+    }
+
+    // Only save to cloud if initial cloud check has completed
+    if (isCloudInitializedRef.current && isFirebaseConfigured()) {
+      setSyncStatus('syncing');
+      saveAppDataToFirebase(appData)
+        .then(() => {
+          setSyncStatus('synced');
+          setSyncErrorMessage(undefined);
+        })
+        .catch((err) => {
+          setSyncStatus('error');
+          setSyncErrorMessage(err?.message || 'Failed to sync changes to Firebase');
+        });
+    }
+  }, [appData]);
 
   // Sync HTML root dark class
   useEffect(() => {
@@ -378,6 +458,8 @@ export default function App() {
         onLockApp={handleLockApp}
         onExportData={handleExportData}
         onImportData={handleImportData}
+        syncStatus={syncStatus}
+        onShowFirebaseInfo={() => setIsFirebaseModalOpen(true)}
       />
 
       {/* Main Container */}
@@ -739,6 +821,14 @@ export default function App() {
         defaultCategory={modalDefaultCategory}
         defaultSubCategory={modalDefaultSubCategory}
         defaultDate={modalDefaultDate}
+      />
+
+      {/* Firebase Status & Rules Info Modal */}
+      <FirebaseInfoModal
+        isOpen={isFirebaseModalOpen}
+        onClose={() => setIsFirebaseModalOpen(false)}
+        syncStatus={syncStatus}
+        errorMessage={syncErrorMessage}
       />
 
     </div>
